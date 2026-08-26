@@ -3,7 +3,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.database import SessionLocal
-from app.db.models import Project
+from app.db.models import Project, User
+from app.api.auth import get_current_user
 
 
 router = APIRouter()
@@ -39,10 +40,12 @@ class ProjectCreate(BaseModel):
 def create_project(
     project_data: ProjectCreate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     project = Project(
         name=project_data.name,
         repository_url=project_data.repository_url,
+        owner_id=current_user.id,
     )
 
     db.add(project)
@@ -59,8 +62,13 @@ def create_project(
 @router.get("/projects")
 def get_projects(
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    projects = db.query(Project).all()
+    projects = (
+        db.query(Project)
+        .filter(Project.owner_id == current_user.id)
+        .all()
+    )
 
     return projects
 
@@ -73,10 +81,14 @@ def get_projects(
 def get_project(
     project_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     project = (
         db.query(Project)
-        .filter(Project.id == project_id)
+        .filter(
+            Project.id == project_id,
+            Project.owner_id == current_user.id,
+        )
         .first()
     )
 
@@ -97,10 +109,14 @@ def get_project(
 def delete_project(
     project_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     project = (
         db.query(Project)
-        .filter(Project.id == project_id)
+        .filter(
+            Project.id == project_id,
+            Project.owner_id == current_user.id,
+        )
         .first()
     )
 
