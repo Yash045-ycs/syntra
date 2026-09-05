@@ -28,3 +28,6 @@ Thumbs.db
 
 # Database backups 
 *.sql
+
+# GitHub App secrets
+secrets/

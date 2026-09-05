@@ -7,6 +7,8 @@ from app.api.projects import router as projects_router
 from app.api.analysis import router as analysis_router
 from app.db.database import Base, engine
 from app.db import models
+from app.api.github import router as github_router
+from app.api.agent import router as agent_router
 
 
 # Create database tables
@@ -48,6 +50,16 @@ app.include_router(
 
 app.include_router(
     auth_router,
+    prefix="/api",
+)
+
+app.include_router(
+    github_router,
+    prefix="/api",
+)
+
+app.include_router(
+    agent_router,
     prefix="/api",
 )
 
