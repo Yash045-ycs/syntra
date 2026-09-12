@@ -1,526 +1,297 @@
-import json
-import os
-import subprocess
-import sys
+﻿import subprocess
+from pathlib import Path
 
 
 class TestRunnerService:
 
-    @staticmethod
-    def read_package_json(
-        repository_path: str,
-    ) -> dict:
+    @classmethod
+    def discover(cls, repository_path: str) -> dict:
 
-        path = os.path.join(
-            repository_path,
-            "package.json",
-        )
+        repository = Path(repository_path).resolve()
 
-        if not os.path.isfile(path):
-            return {}
-
-        try:
-            with open(
-                path,
-                "r",
-                encoding="utf-8",
-            ) as file:
-                return json.load(file)
-
-        except (
-            OSError,
-            json.JSONDecodeError,
-        ):
-            return {}
-
-    @staticmethod
-    def detect_validation_commands(
-        repository_path: str,
-        analysis: dict,
-    ) -> list:
-
-        project_type = (
-            analysis.get("project_type")
-            or ""
-        ).lower()
-
-        build_systems = {
-            item.lower()
-            for item in analysis.get(
-                "build_systems",
-                [],
-            )
-        }
-
-        test_frameworks = {
-            item.lower()
-            for item in analysis.get(
-                "test_frameworks",
-                [],
-            )
-        }
-
-        commands = []
-
-        package = TestRunnerService.read_package_json(
-            repository_path
-        )
-
-        scripts = package.get(
-            "scripts",
-            {},
-        )
-
-        if "npm" in build_systems:
-
-            if "test" in scripts:
-                commands.append(
-                    {
-                        "type": "test",
-                        "command": [
-                            "npm",
-                            "test",
-                        ],
-                    }
-                )
-
-            elif "build" in scripts:
-                commands.append(
-                    {
-                        "type": "build",
-                        "command": [
-                            "npm",
-                            "run",
-                            "build",
-                        ],
-                    }
-                )
-
-            if "typecheck" in scripts:
-                commands.append(
-                    {
-                        "type": "typecheck",
-                        "command": [
-                            "npm",
-                            "run",
-                            "typecheck",
-                        ],
-                    }
-                )
-
-            if "lint" in scripts:
-                commands.append(
-                    {
-                        "type": "lint",
-                        "command": [
-                            "npm",
-                            "run",
-                            "lint",
-                        ],
-                    }
-                )
-
-        if "maven" in build_systems:
-
-            commands.append(
-                {
-                    "type": "test",
-                    "command": [
-                        "mvn",
-                        "test",
-                    ],
-                }
+        if not repository.exists():
+            raise ValueError(
+                f"Repository does not exist: {repository}"
             )
 
-        if "gradle" in build_systems:
-
-            commands.append(
-                {
-                    "type": "test",
-                    "command": [
-                        "gradle",
-                        "test",
-                    ],
-                }
-            )
-
-        if "cargo" in build_systems:
-
-            commands.append(
-                {
-                    "type": "test",
-                    "command": [
-                        "cargo",
-                        "test",
-                    ],
-                }
-            )
-
-            commands.append(
-                {
-                    "type": "build",
-                    "command": [
-                        "cargo",
-                        "check",
-                    ],
-                }
-            )
-
-        if "go" in build_systems:
-
-            commands.append(
-                {
-                    "type": "test",
-                    "command": [
-                        "go",
-                        "test",
-                        "./...",
-                    ],
-                }
-            )
-
-        if (
-            "python application" in project_type
-            or "python" in test_frameworks
-        ):
-
-            if "pytest" in test_frameworks:
-
-                commands.append(
-                    {
-                        "type": "test",
-                        "command": [
-                            sys.executable,
-                            "-m",
-                            "pytest",
-                        ],
-                    }
-                )
-
-            elif analysis.get("test_files"):
-
-                commands.append(
-                    {
-                        "type": "test",
-                        "command": [
-                            sys.executable,
-                            "-m",
-                            "unittest",
-                            "discover",
-                            "tests",
-                        ],
-                    }
-                )
-
-            else:
-
-                commands.append(
-                    {
-                        "type": "syntax",
-                        "command": [
-                            sys.executable,
-                            "-m",
-                            "compileall",
-                            "-q",
-                            ".",
-                        ],
-                    }
-                )
-
-        if "flutter test" in test_frameworks:
-
-            commands.append(
-                {
-                    "type": "test",
-                    "command": [
-                        "flutter",
-                        "test",
-                    ],
-                }
-            )
-
-        if (
-            "html/css web application"
-            in project_type
-            or "html web application"
-            in project_type
-        ):
-
-            commands.append(
-                {
-                    "type": "static",
-                    "command": None,
-                }
-            )
-
-        if (
-            "c++" in project_type.lower()
-            and "cmake" in build_systems
-        ):
-
-            commands.append(
-                {
-                    "type": "build",
-                    "command": [
-                        "cmake",
-                        "--build",
-                        "build",
-                    ],
-                }
-            )
-
-        return commands
-
-    @staticmethod
-    def validate_static_project(
-        repository_path: str,
-        analysis: dict,
-    ) -> dict:
-
-        files = analysis.get(
-            "files",
-            [],
-        )
-
-        checked_files = []
-
-        for file_info in files:
-
-            path = file_info.get("path")
-
-            if not path:
-                continue
-
-            file_path = os.path.join(
-                repository_path,
-                path.replace(
-                    "/",
-                    os.sep,
-                ),
-            )
-
-            if not os.path.isfile(file_path):
-
-                return {
-                    "passed": False,
-                    "exit_code": 1,
-                    "stdout": "",
-                    "stderr": (
-                        f"Missing file: {path}"
-                    ),
-                    "command": None,
-                    "validation_type": "static",
-                }
-
-            try:
-
-                with open(
-                    file_path,
-                    "r",
-                    encoding="utf-8",
-                    errors="strict",
-                ) as file:
-                    file.read()
-
-                checked_files.append(path)
-
-            except (
-                OSError,
-                UnicodeError,
-            ) as exc:
-
-                return {
-                    "passed": False,
-                    "exit_code": 1,
-                    "stdout": "",
-                    "stderr": (
-                        f"Unable to read {path}: "
-                        f"{exc}"
-                    ),
-                    "command": None,
-                    "validation_type": "static",
-                }
-
-        return {
-            "passed": True,
-            "exit_code": 0,
-            "stdout": (
-                f"Validated {len(checked_files)} "
-                "project files successfully."
-            ),
-            "stderr": "",
-            "command": "static-project-validation",
-            "validation_type": "static",
-        }
-
-    @staticmethod
-    def run_command(
-        repository_path: str,
-        command: list,
-        validation_type: str,
-        timeout: int,
-    ) -> dict:
-
-        print(
-            "[Validation] Running: "
-            + " ".join(command)
-        )
-
-        environment = {
-            **os.environ,
-            "PYTHONUNBUFFERED": "1",
-        }
-
-        scripts_path = os.path.join(
-            repository_path,
-            "scripts",
-        )
-
-        existing_pythonpath = environment.get(
-            "PYTHONPATH",
-            "",
-        )
-
-        if os.path.isdir(scripts_path):
-
-            environment["PYTHONPATH"] = (
-                scripts_path
-                + os.pathsep
-                + existing_pythonpath
-                if existing_pythonpath
-                else scripts_path
-            )
-
-        try:
-
-            result = subprocess.run(
-                command,
-                cwd=repository_path,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=environment,
-            )
-
-            print(
-                "[Validation] Exit code: "
-                f"{result.returncode}"
-            )
-
-            return {
-                "passed": result.returncode == 0,
-                "exit_code": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "command": " ".join(command),
-                "validation_type": validation_type,
-            }
-
-        except subprocess.TimeoutExpired as exc:
-
-            stdout = (
-                exc.stdout.decode(errors="ignore")
-                if isinstance(exc.stdout, bytes)
-                else exc.stdout or ""
-            )
-
-            stderr = (
-                exc.stderr.decode(errors="ignore")
-                if isinstance(exc.stderr, bytes)
-                else exc.stderr or ""
-            )
-
-            return {
-                "passed": False,
-                "exit_code": None,
-                "stdout": stdout,
-                "stderr": stderr,
-                "command": " ".join(command),
-                "timeout": True,
-                "validation_type": validation_type,
-            }
-
-        except FileNotFoundError:
-
-            return {
-                "passed": False,
-                "exit_code": None,
-                "stdout": "",
-                "stderr": (
-                    "Required command was not found: "
-                    + command[0]
-                ),
-                "command": " ".join(command),
-                "validation_type": validation_type,
-            }
-
-    @staticmethod
-    def run_tests(
-        repository_path: str,
-        analysis: dict,
-        timeout: int = 120,
-    ) -> dict:
-
-        validation_commands = (
-            TestRunnerService.detect_validation_commands(
-                repository_path,
-                analysis,
-            )
-        )
-
-        if not validation_commands:
-
-            return {
-                "passed": True,
-                "exit_code": 0,
-                "stdout": "",
-                "stderr": "",
-                "command": None,
-                "validation_type": "none",
-                "skipped": True,
-                "reason": (
-                    "No supported validation system "
-                    "was detected"
-                ),
-            }
-
-        for validation in validation_commands:
-
-            validation_type = validation["type"]
-            command = validation["command"]
-
-            if validation_type == "static":
-
-                result = (
-                    TestRunnerService.validate_static_project(
-                        repository_path,
-                        analysis,
-                    )
-                )
-
-            else:
-
-                result = (
-                    TestRunnerService.run_command(
-                        repository_path,
-                        command,
-                        validation_type,
-                        timeout,
-                    )
-                )
-
-            if not result["passed"]:
-
+        checks = [
+            cls._detect_python(repository),
+            cls._detect_node(repository),
+            cls._detect_dart(repository),
+            cls._detect_go(repository),
+            cls._detect_rust(repository),
+            cls._detect_java(repository),
+            cls._detect_cpp(repository),
+        ]
+
+        for result in checks:
+            if result is not None:
                 return result
 
         return {
-            "passed": True,
-            "exit_code": 0,
-            "stdout": (
-                "All detected validation checks passed."
-            ),
-            "stderr": "",
-            "command": "multiple",
-            "validation_type": "multiple",
-            "skipped": False,
+            "detected": False,
+            "language": None,
+            "framework": None,
+            "command": None,
+            "reason": "No supported test framework was confidently detected.",
         }
+
+    @classmethod
+    def run(
+        cls,
+        repository_path: str,
+        timeout: int = 120,
+    ) -> dict:
+
+        test_info = cls.discover(repository_path)
+
+        if not test_info["detected"]:
+            return {
+                **test_info,
+                "executed": False,
+                "passed": None,
+                "stdout": "",
+                "stderr": "",
+                "return_code": None,
+            }
+
+        repository = Path(repository_path).resolve()
+
+        try:
+            result = subprocess.run(
+                test_info["command"],
+                cwd=repository,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+                shell=True,
+            )
+
+            return {
+                **test_info,
+                "executed": True,
+                "passed": result.returncode == 0,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "return_code": result.returncode,
+            }
+
+        except subprocess.TimeoutExpired as exc:
+            return {
+                **test_info,
+                "executed": True,
+                "passed": False,
+                "stdout": exc.stdout or "",
+                "stderr": "Test execution timed out.",
+                "return_code": None,
+            }
+
+        except OSError as exc:
+            return {
+                **test_info,
+                "executed": False,
+                "passed": False,
+                "stdout": "",
+                "stderr": str(exc),
+                "return_code": None,
+            }
+
+    @staticmethod
+    @staticmethod
+    def _detect_python(repository: Path):
+
+        has_python = (
+            (repository / "pyproject.toml").exists()
+            or (repository / "pytest.ini").exists()
+            or (repository / "setup.cfg").exists()
+            or (repository / "requirements.txt").exists()
+            or any(repository.glob("*.py"))
+        )
+
+        if not has_python:
+            return None
+
+        has_pytest_config = (
+            (repository / "pytest.ini").exists()
+            or (repository / "pyproject.toml").exists()
+            or (repository / "setup.cfg").exists()
+        )
+
+        has_test_directory = (
+            (repository / "tests").exists()
+            and (repository / "tests").is_dir()
+        )
+
+        has_test_files = (
+            any(repository.glob("test_*.py"))
+            or any(repository.glob("*_test.py"))
+            or (
+                has_test_directory
+                and any(repository.joinpath("tests").rglob("test_*.py"))
+            )
+        )
+
+        if has_pytest_config or has_test_directory or has_test_files:
+            return {
+                "detected": True,
+                "language": "Python",
+                "framework": "pytest",
+                "command": "python -m pytest",
+                "reason": "Python test configuration or conventional test files detected.",
+            }
+
+        return {
+            "detected": False,
+            "language": "Python",
+            "framework": None,
+            "command": None,
+            "reason": "Python project detected, but no test framework was confidently identified.",
+        }
+
+    @staticmethod
+    def _detect_node(repository: Path):
+
+        package_json = repository / "package.json"
+
+        if not package_json.exists():
+            return None
+
+        try:
+            import json
+
+            data = json.loads(
+                package_json.read_text(
+                    encoding="utf-8"
+                )
+            )
+        except Exception:
+            return {
+                "detected": False,
+                "language": "JavaScript/TypeScript",
+                "framework": None,
+                "command": None,
+                "reason": "package.json exists but could not be parsed.",
+            }
+
+        scripts = data.get("scripts", {})
+
+        if isinstance(scripts, dict) and "test" in scripts:
+            return {
+                "detected": True,
+                "language": "JavaScript/TypeScript",
+                "framework": "npm test",
+                "command": "npm test",
+                "reason": "A test script exists in package.json.",
+            }
+
+        return {
+            "detected": False,
+            "language": "JavaScript/TypeScript",
+            "framework": None,
+            "command": None,
+            "reason": "package.json exists but no test script was found.",
+        }
+
+    @staticmethod
+    def _detect_dart(repository: Path):
+
+        pubspec = repository / "pubspec.yaml"
+
+        if not pubspec.exists():
+            return None
+
+        if any(repository.rglob("*_test.dart")):
+            return {
+                "detected": True,
+                "language": "Dart",
+                "framework": "Dart test",
+                "command": "dart test",
+                "reason": "Dart test files detected.",
+            }
+
+        return {
+            "detected": False,
+            "language": "Dart",
+            "framework": None,
+            "command": None,
+            "reason": "Dart project detected but no test files were found.",
+        }
+
+    @staticmethod
+    def _detect_go(repository: Path):
+
+        if not (repository / "go.mod").exists():
+            return None
+
+        if any(repository.rglob("*_test.go")):
+            return {
+                "detected": True,
+                "language": "Go",
+                "framework": "Go test",
+                "command": "go test ./...",
+                "reason": "Go test files detected.",
+            }
+
+        return {
+            "detected": False,
+            "language": "Go",
+            "framework": None,
+            "command": None,
+            "reason": "Go project detected but no test files were found.",
+        }
+
+    @staticmethod
+    def _detect_rust(repository: Path):
+
+        if not (repository / "Cargo.toml").exists():
+            return None
+
+        return {
+            "detected": True,
+            "language": "Rust",
+            "framework": "Cargo test",
+            "command": "cargo test",
+            "reason": "Cargo.toml detected.",
+        }
+
+    @staticmethod
+    def _detect_java(repository: Path):
+
+        if (repository / "pom.xml").exists():
+            return {
+                "detected": True,
+                "language": "Java",
+                "framework": "Maven",
+                "command": "mvn test",
+                "reason": "Maven project detected.",
+            }
+
+        if (
+            (repository / "build.gradle").exists()
+            or (repository / "build.gradle.kts").exists()
+        ):
+            return {
+                "detected": True,
+                "language": "Java/Kotlin",
+                "framework": "Gradle",
+                "command": "gradlew test",
+                "reason": "Gradle project detected.",
+            }
+
+        return None
+
+    @staticmethod
+    def _detect_cpp(repository: Path):
+
+        if (repository / "CMakeLists.txt").exists():
+            return {
+                "detected": False,
+                "language": "C/C++",
+                "framework": None,
+                "command": None,
+                "reason": "CMake project detected, but no safe generic test command was selected.",
+            }
+
+        return None

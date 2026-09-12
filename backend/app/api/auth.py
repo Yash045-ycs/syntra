@@ -40,6 +40,7 @@ class AuthResponse(BaseModel):
 class UserResponse(BaseModel):
     id: int
     email: EmailStr
+    github_username: str | None = None
 
 
 @router.post(
@@ -71,6 +72,7 @@ def register(
     db.refresh(user)
 
     return user
+
 
 @router.post(
     "/login",

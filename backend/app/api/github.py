@@ -37,9 +37,9 @@ def github_login(
         GitHubAuthService.get_authorization_url(state)
     )
 
-    return RedirectResponse(
-        authorization_url
-    )
+    return {
+        "authorization_url": authorization_url
+    }
 
 
 @router.get("/callback")
@@ -61,9 +61,8 @@ def github_callback(
         )
 
         if oauth_state is None:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid or expired OAuth state",
+            return RedirectResponse(
+                "http://localhost:5173/github?error=invalid_state"
             )
 
         user = db.get(
@@ -75,9 +74,8 @@ def github_callback(
             db.delete(oauth_state)
             db.commit()
 
-            raise HTTPException(
-                status_code=400,
-                detail="Syntra user not found",
+            return RedirectResponse(
+                "http://localhost:5173/github?error=user_not_found"
             )
 
         db.delete(oauth_state)
@@ -101,12 +99,8 @@ def github_callback(
             )
 
             if user is None:
-                raise HTTPException(
-                    status_code=403,
-                    detail=(
-                        "GitHub account is not linked "
-                        "to a Syntra account"
-                    ),
+                return RedirectResponse(
+                    "http://localhost:5173/github?error=account_not_linked"
                 )
 
         existing_github_user = db.scalar(
@@ -120,12 +114,8 @@ def github_callback(
             existing_github_user is not None
             and existing_github_user.id != user.id
         ):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "GitHub account is already linked "
-                    "to another Syntra user"
-                ),
+            return RedirectResponse(
+                "http://localhost:5173/github?error=github_already_linked"
             )
 
         user.github_user_id = github_user["id"]
@@ -142,35 +132,11 @@ def github_callback(
         db.commit()
         db.refresh(user)
 
-        if installation_id is not None:
-            return {
-                "message": (
-                    "GitHub App installed successfully"
-                ),
-                "syntra_user_id": user.id,
-                "github_user": {
-                    "id": user.github_user_id,
-                    "login": user.github_username,
-                },
-                "installation_id": (
-                    user.github_installation_id
-                ),
-                "setup_action": setup_action,
-            }
+        return RedirectResponse(
+            "http://localhost:5173/github?connected=true"
+        )
 
-        return {
-            "message": (
-                "GitHub account linked successfully"
-            ),
-            "syntra_user_id": user.id,
-            "github_user": {
-                "id": user.github_user_id,
-                "login": user.github_username,
-            },
-        }
-
-    except RuntimeError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc),
+    except RuntimeError:
+        return RedirectResponse(
+            "http://localhost:5173/github?error=github_authorization_failed"
         )

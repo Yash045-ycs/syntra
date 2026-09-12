@@ -1,5 +1,6 @@
 import base64
 import os
+import re
 import subprocess
 
 
@@ -82,6 +83,17 @@ class GitService:
         )
 
     @classmethod
+    def get_current_branch(
+        cls,
+        repository_path: str,
+    ) -> dict:
+
+        return cls.run_git(
+            repository_path,
+            ["branch", "--show-current"],
+        )
+
+    @classmethod
     def get_diff(
         cls,
         repository_path: str,
@@ -99,6 +111,55 @@ class GitService:
         branch_name: str,
     ) -> dict:
 
+        branch_name = cls._sanitize_branch_name(
+            branch_name
+        )
+
+        if not branch_name:
+            return {
+                "success": False,
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": "Invalid branch name",
+                "command": "",
+            }
+
+        validation = cls.run_git(
+            repository_path,
+            [
+                "check-ref-format",
+                "--branch",
+                branch_name,
+            ],
+        )
+
+        if not validation["success"]:
+            return {
+                **validation,
+                "stderr": (
+                    validation["stderr"]
+                    or "Invalid Git branch name"
+                ),
+            }
+
+        existing = cls.run_git(
+            repository_path,
+            [
+                "rev-parse",
+                "--verify",
+                f"refs/heads/{branch_name}",
+            ],
+        )
+
+        if existing["success"]:
+            return {
+                "success": False,
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": f"Branch already exists: {branch_name}",
+                "command": "",
+            }
+
         return cls.run_git(
             repository_path,
             ["checkout", "-b", branch_name],
@@ -109,11 +170,34 @@ class GitService:
         cls,
         repository_path: str,
         message: str,
+        file_paths: list[str] | None = None,
     ) -> dict:
+
+        if not message.strip():
+            return {
+                "success": False,
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": "Commit message cannot be empty",
+                "command": "",
+            }
+
+        if file_paths:
+            add_args = ["add", "--", *file_paths]
+        else:
+            return {
+                "success": False,
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": (
+                    "Explicit file paths are required for safe commits"
+                ),
+                "command": "",
+            }
 
         add_result = cls.run_git(
             repository_path,
-            ["add", "-A"],
+            add_args,
         )
 
         if not add_result["success"]:
@@ -132,8 +216,42 @@ class GitService:
         access_token: str | None = None,
     ) -> dict:
 
+        if not branch_name.strip():
+            return {
+                "success": False,
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": "Branch name cannot be empty",
+                "command": "",
+            }
+
         return cls.run_git(
             repository_path,
             ["push", "origin", branch_name],
             access_token=access_token,
         )
+
+    @staticmethod
+    def _sanitize_branch_name(
+        branch_name: str,
+    ) -> str:
+
+        branch_name = branch_name.strip()
+
+        branch_name = re.sub(
+            r"[^A-Za-z0-9._/-]+",
+            "-",
+            branch_name,
+        )
+
+        branch_name = re.sub(
+            r"-+",
+            "-",
+            branch_name,
+        )
+
+        branch_name = branch_name.strip(
+            "-./"
+        )
+
+        return branch_name

@@ -4,11 +4,16 @@ import subprocess
 import tempfile
 from urllib.parse import urlparse
 
+from app.services.github_service import GitHubService
+
 
 class RepositoryService:
 
     @staticmethod
-    def validate_github_url(repository_url: str) -> bool:
+    def validate_github_url(
+        repository_url: str,
+    ) -> bool:
+
         parsed = urlparse(repository_url)
 
         return (
@@ -17,7 +22,51 @@ class RepositoryService:
                 "github.com",
                 "www.github.com",
             }
-            and len(parsed.path.strip("/").split("/")) == 2
+            and len(
+                parsed.path.strip("/").split("/")
+            ) == 2
+        )
+
+    @staticmethod
+    def parse_github_url(
+        repository_url: str,
+    ) -> tuple[str, str]:
+
+        if not RepositoryService.validate_github_url(
+            repository_url
+        ):
+            raise ValueError(
+                "Invalid GitHub repository URL"
+            )
+
+        parsed = urlparse(repository_url)
+
+        parts = parsed.path.strip("/").split("/")
+
+        owner = parts[0]
+        repository = parts[1]
+
+        if repository.endswith(".git"):
+            repository = repository[:-4]
+
+        return owner, repository
+
+    @staticmethod
+    def get_repository_info(
+        repository_url: str,
+        access_token: str,
+    ) -> dict:
+
+        owner, repository = (
+            RepositoryService.parse_github_url(
+                repository_url
+            )
+        )
+
+        return GitHubService.get_repository(
+            owner=owner,
+            repository=repository,
+            access_token=access_token,
         )
 
     @staticmethod
@@ -55,6 +104,7 @@ class RepositoryService:
         )
 
         try:
+
             command = [
                 "git",
                 "-c",
@@ -73,6 +123,7 @@ class RepositoryService:
             }
 
             if access_token:
+
                 askpass_path = os.path.join(
                     temp_parent,
                     ".syntra_git_askpass.cmd",
@@ -83,6 +134,7 @@ class RepositoryService:
                     "w",
                     encoding="utf-8",
                 ) as file:
+
                     file.write(
                         "@echo off\r\n"
                         "echo %1 | findstr /I \"Username\" >nul\r\n"
@@ -97,24 +149,35 @@ class RepositoryService:
                         ")\r\n"
                     )
 
-                environment["GIT_ASKPASS"] = askpass_path
-                environment["SYNTRA_GIT_TOKEN"] = access_token
+                environment["GIT_ASKPASS"] = (
+                    askpass_path
+                )
+
+                environment[
+                    "SYNTRA_GIT_TOKEN"
+                ] = access_token
 
             try:
+
                 result = subprocess.run(
                     command,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=60,
                     env=environment,
                 )
 
             except FileNotFoundError:
+
                 raise RuntimeError(
-                    "Git is not installed or not available in PATH"
+                    "Git is not installed or "
+                    "not available in PATH"
                 )
 
             if result.returncode != 0:
+
                 print(
                     "[Repository] Clone failed"
                 )
@@ -134,12 +197,14 @@ class RepositoryService:
                 )
 
             print(
-                "[Repository] Clone completed successfully"
+                "[Repository] Clone completed "
+                "successfully"
             )
 
             return temp_dir
 
         except subprocess.TimeoutExpired:
+
             print(
                 "[Repository] Clone timed out"
             )
@@ -150,11 +215,15 @@ class RepositoryService:
             )
 
             raise RuntimeError(
-                "Repository cloning timed out after 60 seconds"
+                "Repository cloning timed out "
+                "after 60 seconds"
             )
 
         except Exception:
-            if os.path.exists(temp_parent):
+
+            if os.path.exists(
+                temp_parent
+            ):
                 shutil.rmtree(
                     temp_parent,
                     ignore_errors=True,
@@ -163,13 +232,150 @@ class RepositoryService:
             raise
 
         finally:
-            if askpass_path and os.path.exists(
+
+            if (
                 askpass_path
+                and os.path.exists(
+                    askpass_path
+                )
             ):
+
                 try:
-                    os.remove(askpass_path)
+
+                    os.remove(
+                        askpass_path
+                    )
+
                 except OSError:
+
                     pass
+
+    @staticmethod
+    def get_head_commit(
+        repository_path: str,
+    ) -> str:
+
+        try:
+
+            result = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    repository_path,
+                    "rev-parse",
+                    "HEAD",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+
+        except FileNotFoundError:
+
+            raise RuntimeError(
+                "Git is not installed or "
+                "not available in PATH"
+            )
+
+        if result.returncode != 0:
+
+            raise RuntimeError(
+                "Unable to determine repository "
+                "commit: "
+                + result.stderr.strip()
+            )
+
+        commit_sha = result.stdout.strip()
+
+        if not commit_sha:
+
+            raise RuntimeError(
+                "Repository HEAD commit is empty"
+            )
+
+        return commit_sha
+
+    @staticmethod
+    def prepare_repository(
+        repository_url: str,
+        installation_id: int,
+    ) -> dict:
+
+        owner, repository = (
+            RepositoryService.parse_github_url(
+                repository_url
+            )
+        )
+
+        print(
+            f"[Repository] Preparing "
+            f"{owner}/{repository}"
+        )
+
+        access_token = (
+            GitHubService.create_installation_token(
+                installation_id
+            )
+        )
+
+        metadata = (
+            GitHubService.get_repository(
+                owner=owner,
+                repository=repository,
+                access_token=access_token,
+            )
+        )
+
+        repository_path = (
+            RepositoryService.clone_repository(
+                repository_url=repository_url,
+                access_token=access_token,
+            )
+        )
+
+        try:
+
+            commit_sha = (
+                RepositoryService.get_head_commit(
+                    repository_path
+                )
+            )
+
+            return {
+                "repository_url": repository_url,
+                "owner": owner,
+                "repository": repository,
+                "full_name": metadata[
+                    "full_name"
+                ],
+                "name": metadata[
+                    "name"
+                ],
+                "default_branch": metadata[
+                    "default_branch"
+                ],
+                "private": metadata[
+                    "private"
+                ],
+                "html_url": metadata[
+                    "html_url"
+                ],
+                "local_path": repository_path,
+                "commit_sha": commit_sha,
+                "installation_id": (
+                    installation_id
+                ),
+            }
+
+        except Exception:
+
+            RepositoryService.cleanup_repository(
+                repository_path
+            )
+
+            raise
 
     @staticmethod
     def cleanup_repository(
@@ -178,14 +384,19 @@ class RepositoryService:
 
         if (
             repository_path
-            and os.path.exists(repository_path)
+            and os.path.exists(
+                repository_path
+            )
         ):
+
             print(
                 "[Repository] Cleaning up "
                 "temporary repository"
             )
 
             shutil.rmtree(
-                os.path.dirname(repository_path),
+                os.path.dirname(
+                    repository_path
+                ),
                 ignore_errors=True,
             )
