@@ -32,3 +32,4 @@ Thumbs.db
 # GitHub App secrets
 secrets/
 backend/rag_test_repo/
+backend/secrets/
