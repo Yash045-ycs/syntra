@@ -11,6 +11,7 @@ from app.db.models import GitHubOAuthState, User
 from app.services.github_service import GitHubService
 from app.services.github_auth_service import GitHubAuthService
 from app.services.token_encryption_service import TokenEncryptionService
+from app.core.config import settings
 
 
 router = APIRouter(
@@ -104,7 +105,7 @@ def github_callback(
 
         if oauth_state is None:
             return RedirectResponse(
-                "http://localhost:5173/github?error=invalid_state"
+                f"{settings.FRONTEND_URL}/github?error=invalid_state"
             )
 
         user = db.get(
@@ -117,7 +118,7 @@ def github_callback(
             db.commit()
 
             return RedirectResponse(
-                "http://localhost:5173/github?error=user_not_found"
+                f"{settings.FRONTEND_URL}/github?error=user_not_found"
             )
 
         db.delete(oauth_state)
@@ -142,7 +143,7 @@ def github_callback(
 
             if user is None:
                 return RedirectResponse(
-                    "http://localhost:5173/github?error=account_not_linked"
+                    f"{settings.FRONTEND_URL}/github?error=account_not_linked"
                 )
 
         existing_github_user = db.scalar(
@@ -157,7 +158,7 @@ def github_callback(
             and existing_github_user.id != user.id
         ):
             return RedirectResponse(
-                "http://localhost:5173/github?error=github_already_linked"
+                f"{settings.FRONTEND_URL}/github?error=github_already_linked"
             )
 
         user.github_user_id = github_user["id"]
@@ -175,10 +176,10 @@ def github_callback(
         db.refresh(user)
 
         return RedirectResponse(
-            "http://localhost:5173/github?connected=true"
+            f"{settings.FRONTEND_URL}/github?connected=true"
         )
 
     except RuntimeError:
         return RedirectResponse(
-            "http://localhost:5173/github?error=github_authorization_failed"
+            f"{settings.FRONTEND_URL}/github?error=github_authorization_failed"
         )
