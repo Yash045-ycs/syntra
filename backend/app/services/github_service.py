@@ -154,6 +154,45 @@ class GitHubService:
         }
 
     @classmethod
+    def get_user_repositories(
+        cls,
+        access_token: str,
+    ) -> list[dict]:
+
+        response = requests.get(
+            f"{cls.BASE_URL}/user/repos",
+            headers=cls.get_headers(access_token),
+            params={
+                "per_page": 100,
+                "sort": "updated",
+                "direction": "desc",
+            },
+            timeout=30,
+        )
+
+        if not response.ok:
+            raise RuntimeError(
+                f"GitHub repositories request failed: "
+                f"{response.status_code} "
+                f"{response.text}"
+            )
+
+        data = response.json()
+
+        return [
+            {
+                "id": repository["id"],
+                "name": repository["name"],
+                "full_name": repository["full_name"],
+                "owner": repository["owner"]["login"],
+                "private": repository["private"],
+                "html_url": repository["html_url"],
+                "default_branch": repository["default_branch"],
+            }
+            for repository in data
+        ]
+
+    @classmethod
     def clone_repository(
         cls,
         repository_url: str,
@@ -352,4 +391,46 @@ class GitHubService:
             "draft": data["draft"],
             "head": data["head"]["ref"],
             "base": data["base"]["ref"],
+        }
+
+    @classmethod
+    def merge_pull_request(
+        cls,
+        owner: str,
+        repository: str,
+        pull_number: int,
+        access_token: str | None = None,
+        merge_method: str = "squash",
+    ) -> dict:
+
+        url = (
+            f"{cls.BASE_URL}/repos/"
+            f"{owner}/{repository}/pulls/"
+            f"{pull_number}/merge"
+        )
+
+        payload = {
+            "merge_method": merge_method,
+        }
+
+        response = requests.put(
+            url,
+            headers=cls.get_headers(access_token),
+            json=payload,
+            timeout=30,
+        )
+
+        if not response.ok:
+            raise RuntimeError(
+                f"GitHub pull request merge failed: "
+                f"{response.status_code} "
+                f"{response.text}"
+            )
+
+        data = response.json()
+
+        return {
+            "sha": data.get("sha"),
+            "merged": data.get("merged", False),
+            "message": data.get("message"),
         }

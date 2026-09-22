@@ -96,12 +96,52 @@ export async function getGitHubAuthorizationUrl() {
   return request<{ authorization_url: string }>("/api/github/login");
 }
 
+export async function getGitHubRepositories() {
+  return request<
+    {
+      id: number;
+      name: string;
+      full_name: string;
+      owner: string;
+      private: boolean;
+      html_url: string;
+      default_branch: string;
+    }[]
+  >("/api/github/repositories");
+}
+
+export async function disconnectGitHub() {
+  return request<{ success: boolean; message: string }>(
+    "/api/github/disconnect",
+    {
+      method: "POST",
+    },
+  );
+}
+
 export async function getProjects() {
-return request("/api/projects");
+  return request("/api/projects");
 }
 
 export async function getProject(projectId: number) {
 return request(`/api/projects/${projectId}`);
+}
+
+export async function getActivity() {
+  return request("/api/activity");
+}
+
+export async function getProjectActivity(projectId: number) {
+  return request(`/api/activity/projects/${projectId}`);
+}
+
+export async function getAgentRunPrStatus(
+  projectId: number,
+  runId: number,
+) {
+  return request(
+    `/api/projects/${projectId}/runs/${runId}/pr`,
+  );
 }
 
 export async function createProject(
@@ -124,15 +164,15 @@ method: "DELETE",
 }
 
 export async function runAgent(
-projectId: number,
-userRequest: string,
+  projectId: number,
+  userRequest: string,
 ) {
-return request(`/api/projects/${projectId}/agent/run`, {
-method: "POST",
-body: JSON.stringify({
-user_request: userRequest,
-}),
-});
+  return request(`/api/projects/${projectId}/agent/run`, {
+    method: "POST",
+    body: JSON.stringify({
+      request: userRequest,
+    }),
+  });
 }
 
 export async function getAgentRuns(projectId: number) {
@@ -160,6 +200,18 @@ runId: number,
 return request(`/api/projects/${projectId}/runs/${runId}/approve`, {
 method: "POST",
 });
+}
+
+export async function mergeAgentRun(
+  projectId: number,
+  runId: number,
+) {
+  return request(
+    `/api/projects/${projectId}/runs/${runId}/merge`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export async function getRunPullRequest(

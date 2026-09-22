@@ -8,7 +8,7 @@ class RepositoryIndexService:
     @staticmethod
     def prepare_and_index_repository(
         repository_url: str,
-        installation_id: int,
+        access_token: str,
         project_id: int,
         user_id: int,
     ) -> dict:
@@ -17,22 +17,18 @@ class RepositoryIndexService:
         db = SessionLocal()
 
         try:
-            repository = (
-                RepositoryService.prepare_repository(
-                    repository_url=repository_url,
-                    installation_id=installation_id,
-                )
+            repository = RepositoryService.prepare_repository(
+                repository_url=repository_url,
+                access_token=access_token,
             )
 
-            index_result = (
-                CodeIndexerService.index_repository(
-                    db=db,
-                    repository_path=repository["local_path"],
-                    project_id=project_id,
-                    user_id=user_id,
-                    repository_url=repository_url,
-                    commit_sha=repository["commit_sha"],
-                )
+            index_result = CodeIndexerService.index_repository(
+                db=db,
+                repository_path=repository["local_path"],
+                project_id=project_id,
+                user_id=user_id,
+                repository_url=repository_url,
+                commit_sha=repository["commit_sha"],
             )
 
             return {
@@ -41,9 +37,7 @@ class RepositoryIndexService:
                 "owner": repository["owner"],
                 "repository": repository["repository"],
                 "full_name": repository["full_name"],
-                "default_branch": repository[
-                    "default_branch"
-                ],
+                "default_branch": repository["default_branch"],
                 "private": repository["private"],
                 "html_url": repository["html_url"],
                 "commit_sha": repository["commit_sha"],

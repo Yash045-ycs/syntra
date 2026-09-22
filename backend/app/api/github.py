@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.db.database import get_db
 from app.db.models import GitHubOAuthState, User
+from app.services.github_service import GitHubService
 from app.services.github_auth_service import GitHubAuthService
 from app.services.token_encryption_service import TokenEncryptionService
 
@@ -41,6 +42,47 @@ def github_login(
         "authorization_url": authorization_url
     }
 
+@router.get("/repositories")
+def github_repositories(
+    current_user: User = Depends(get_current_user),
+):
+    if not current_user.github_access_token:
+        raise HTTPException(
+            status_code=400,
+            detail="GitHub account is not connected",
+        )
+
+    try:
+        access_token = TokenEncryptionService.decrypt(
+            current_user.github_access_token
+        )
+
+        return GitHubService.get_user_repositories(
+            access_token
+        )
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to fetch GitHub repositories: {exc}",
+        )
+
+@router.post("/disconnect")
+def github_disconnect(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    current_user.github_user_id = None
+    current_user.github_username = None
+    current_user.github_access_token = None
+    current_user.github_installation_id = None
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "GitHub account disconnected",
+    }
 
 @router.get("/callback")
 def github_callback(

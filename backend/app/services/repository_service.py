@@ -72,7 +72,7 @@ class RepositoryService:
     @staticmethod
     def clone_repository(
         repository_url: str,
-        access_token: str | None = None,
+        access_token: str,
     ) -> str:
 
         if not RepositoryService.validate_github_url(
@@ -80,6 +80,11 @@ class RepositoryService:
         ):
             raise ValueError(
                 "Invalid GitHub repository URL"
+            )
+
+        if not access_token:
+            raise ValueError(
+                "GitHub access token is required"
             )
 
         temp_parent = tempfile.mkdtemp(
@@ -122,40 +127,33 @@ class RepositoryService:
                 "GIT_TERMINAL_PROMPT": "0",
             }
 
-            if access_token:
+            askpass_path = os.path.join(
+                temp_parent,
+                ".syntra_git_askpass.cmd",
+            )
 
-                askpass_path = os.path.join(
-                    temp_parent,
-                    ".syntra_git_askpass.cmd",
+            with open(
+                askpass_path,
+                "w",
+                encoding="utf-8",
+            ) as file:
+
+                file.write(
+                    "@echo off\r\n"
+                    "echo %1 | findstr /I \"Username\" >nul\r\n"
+                    "if not errorlevel 1 (\r\n"
+                    "echo x-access-token\r\n"
+                    "exit /b 0\r\n"
+                    ")\r\n"
+                    "echo %1 | findstr /I \"Password\" >nul\r\n"
+                    "if not errorlevel 1 (\r\n"
+                    "echo %SYNTRA_GIT_TOKEN%\r\n"
+                    "exit /b 0\r\n"
+                    ")\r\n"
                 )
 
-                with open(
-                    askpass_path,
-                    "w",
-                    encoding="utf-8",
-                ) as file:
-
-                    file.write(
-                        "@echo off\r\n"
-                        "echo %1 | findstr /I \"Username\" >nul\r\n"
-                        "if not errorlevel 1 (\r\n"
-                        "echo x-access-token\r\n"
-                        "exit /b 0\r\n"
-                        ")\r\n"
-                        "echo %1 | findstr /I \"Password\" >nul\r\n"
-                        "if not errorlevel 1 (\r\n"
-                        "echo %SYNTRA_GIT_TOKEN%\r\n"
-                        "exit /b 0\r\n"
-                        ")\r\n"
-                    )
-
-                environment["GIT_ASKPASS"] = (
-                    askpass_path
-                )
-
-                environment[
-                    "SYNTRA_GIT_TOKEN"
-                ] = access_token
+            environment["GIT_ASKPASS"] = askpass_path
+            environment["SYNTRA_GIT_TOKEN"] = access_token
 
             try:
 
@@ -165,7 +163,7 @@ class RepositoryService:
                     text=True,
                     encoding="utf-8",
                     errors="replace",
-                    timeout=60,
+                    timeout=120,
                     env=environment,
                 )
 
@@ -216,14 +214,12 @@ class RepositoryService:
 
             raise RuntimeError(
                 "Repository cloning timed out "
-                "after 60 seconds"
+                "after 120 seconds"
             )
 
         except Exception:
 
-            if os.path.exists(
-                temp_parent
-            ):
+            if os.path.exists(temp_parent):
                 shutil.rmtree(
                     temp_parent,
                     ignore_errors=True,
@@ -235,19 +231,12 @@ class RepositoryService:
 
             if (
                 askpass_path
-                and os.path.exists(
-                    askpass_path
-                )
+                and os.path.exists(askpass_path)
             ):
 
                 try:
-
-                    os.remove(
-                        askpass_path
-                    )
-
+                    os.remove(askpass_path)
                 except OSError:
-
                     pass
 
     @staticmethod
@@ -300,8 +289,13 @@ class RepositoryService:
     @staticmethod
     def prepare_repository(
         repository_url: str,
-        installation_id: int,
+        access_token: str,
     ) -> dict:
+
+        if not access_token:
+            raise ValueError(
+                "GitHub access token is required"
+            )
 
         owner, repository = (
             RepositoryService.parse_github_url(
@@ -314,18 +308,10 @@ class RepositoryService:
             f"{owner}/{repository}"
         )
 
-        access_token = (
-            GitHubService.create_installation_token(
-                installation_id
-            )
-        )
-
-        metadata = (
-            GitHubService.get_repository(
-                owner=owner,
-                repository=repository,
-                access_token=access_token,
-            )
+        metadata = GitHubService.get_repository(
+            owner=owner,
+            repository=repository,
+            access_token=access_token,
         )
 
         repository_path = (
@@ -364,9 +350,6 @@ class RepositoryService:
                 ],
                 "local_path": repository_path,
                 "commit_sha": commit_sha,
-                "installation_id": (
-                    installation_id
-                ),
             }
 
         except Exception:
@@ -384,9 +367,7 @@ class RepositoryService:
 
         if (
             repository_path
-            and os.path.exists(
-                repository_path
-            )
+            and os.path.exists(repository_path)
         ):
 
             print(
@@ -395,8 +376,6 @@ class RepositoryService:
             )
 
             shutil.rmtree(
-                os.path.dirname(
-                    repository_path
-                ),
+                os.path.dirname(repository_path),
                 ignore_errors=True,
             )

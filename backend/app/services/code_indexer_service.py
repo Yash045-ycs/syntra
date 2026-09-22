@@ -2,7 +2,7 @@ import hashlib
 import os
 from pathlib import Path
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.db.models import CodeEmbedding
@@ -57,6 +57,41 @@ class CodeIndexerService:
         commit_sha: str,
     ) -> dict:
 
+        existing_count = db.execute(
+            select(CodeEmbedding.id)
+            .where(
+                CodeEmbedding.project_id == project_id,
+                CodeEmbedding.user_id == user_id,
+                CodeEmbedding.commit_sha == commit_sha,
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+
+        if existing_count is not None:
+            existing_chunks = db.execute(
+                select(CodeEmbedding)
+                .where(
+                    CodeEmbedding.project_id == project_id,
+                    CodeEmbedding.user_id == user_id,
+                    CodeEmbedding.commit_sha == commit_sha,
+                )
+            ).scalars().all()
+
+            indexed_files = len(
+                {
+                    embedding.file_path
+                    for embedding in existing_chunks
+                }
+            )
+
+            return {
+                "indexed": False,
+                "already_indexed": True,
+                "files": indexed_files,
+                "chunks": len(existing_chunks),
+                "commit_sha": commit_sha,
+            }
+
         files = cls._collect_files(
             repository_path
         )
@@ -95,6 +130,7 @@ class CodeIndexerService:
         if not all_chunks:
             return {
                 "indexed": 0,
+                "already_indexed": False,
                 "files": 0,
                 "chunks": 0,
                 "commit_sha": commit_sha,
@@ -151,6 +187,7 @@ class CodeIndexerService:
 
         return {
             "indexed": True,
+            "already_indexed": False,
             "files": indexed_files,
             "chunks": len(records),
             "commit_sha": commit_sha,
@@ -192,8 +229,9 @@ class CodeIndexerService:
                 except OSError:
                     continue
 
-                if not CodeChunkerService.SUPPORTED_EXTENSIONS.__contains__(
+                if (
                     Path(filename).suffix.lower()
+                    not in CodeChunkerService.SUPPORTED_EXTENSIONS
                 ):
                     continue
 

@@ -49,6 +49,7 @@ class CodeChangeApplierService:
 
         applied = []
         backups = []
+        created_files = []
 
         try:
             for change in changes:
@@ -67,7 +68,7 @@ class CodeChangeApplierService:
                         "Change is missing file_path"
                     )
 
-                if action != "modify":
+                if action not in {"modify", "create"}:
                     raise ValueError(
                         f"Unsupported action: {action}"
                     )
@@ -82,44 +83,22 @@ class CodeChangeApplierService:
                     file_path,
                 )
 
-                if not target.exists():
-                    raise ValueError(
-                        f"Target file does not exist: {file_path}"
+                if action == "modify":
+                    cls._apply_modify(
+                        target=target,
+                        file_path=file_path,
+                        content=content,
+                        backup_directory=backup_directory,
+                        backups=backups,
                     )
 
-                if not target.is_file():
-                    raise ValueError(
-                        f"Target is not a file: {file_path}"
+                elif action == "create":
+                    cls._apply_create(
+                        target=target,
+                        file_path=file_path,
+                        content=content,
+                        created_files=created_files,
                     )
-
-                original_content = target.read_text(
-                    encoding="utf-8",
-                    errors="strict",
-                )
-
-                backup_path = backup_directory / Path(
-                    file_path
-                )
-
-                backup_path.parent.mkdir(
-                    parents=True,
-                    exist_ok=True,
-                )
-
-                backup_path.write_text(
-                    original_content,
-                    encoding="utf-8",
-                )
-
-                backups.append({
-                    "file_path": file_path,
-                    "backup_path": str(backup_path),
-                })
-
-                target.write_text(
-                    content,
-                    encoding="utf-8",
-                )
 
                 applied.append({
                     "file_path": file_path,
@@ -129,6 +108,7 @@ class CodeChangeApplierService:
             return {
                 "applied": applied,
                 "backups": backups,
+                "created_files": created_files,
                 "backup_directory": str(backup_directory),
                 "count": len(applied),
             }
@@ -137,6 +117,7 @@ class CodeChangeApplierService:
             cls.restore_changes(
                 repository_path=repository_path,
                 backups=backups,
+                created_files=created_files,
             )
 
             shutil.rmtree(
@@ -147,18 +128,112 @@ class CodeChangeApplierService:
             raise
 
     @classmethod
+    def _apply_modify(
+        cls,
+        target: Path,
+        file_path: str,
+        content: str,
+        backup_directory: Path,
+        backups: list[dict],
+    ) -> None:
+
+        if not target.exists():
+            raise ValueError(
+                f"Target file does not exist: {file_path}"
+            )
+
+        if not target.is_file():
+            raise ValueError(
+                f"Target is not a file: {file_path}"
+            )
+
+        original_content = target.read_text(
+            encoding="utf-8",
+            errors="strict",
+        )
+
+        backup_path = backup_directory / Path(
+            file_path
+        )
+
+        backup_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        backup_path.write_text(
+            original_content,
+            encoding="utf-8",
+        )
+
+        backups.append({
+            "file_path": file_path,
+            "backup_path": str(backup_path),
+        })
+
+        target.write_text(
+            content,
+            encoding="utf-8",
+        )
+
+    @classmethod
+    def _apply_create(
+        cls,
+        target: Path,
+        file_path: str,
+        content: str,
+        created_files: list[str],
+    ) -> None:
+
+        if target.exists():
+            raise ValueError(
+                f"Target file already exists: {file_path}"
+            )
+
+        target.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        target.write_text(
+            content,
+            encoding="utf-8",
+        )
+
+        created_files.append(file_path)
+
+    @classmethod
     def restore_changes(
         cls,
         repository_path: str,
         backups: list[dict],
+        created_files: list[str] | None = None,
     ) -> None:
 
         repository = Path(repository_path).resolve()
 
+        if created_files:
+            for file_path in reversed(created_files):
+
+                target = cls._validate_path(
+                    repository,
+                    file_path,
+                )
+
+                if target.exists() and target.is_file():
+                    target.unlink()
+
+                cls._remove_empty_parent_directories(
+                    repository,
+                    target.parent,
+                )
+
         for backup in reversed(backups):
 
             file_path = backup["file_path"]
-            backup_path = Path(backup["backup_path"])
+            backup_path = Path(
+                backup["backup_path"]
+            )
 
             target = cls._validate_path(
                 repository,
@@ -177,6 +252,29 @@ class CodeChangeApplierService:
                 backup_path,
                 target,
             )
+
+    @classmethod
+    def _remove_empty_parent_directories(
+        cls,
+        repository: Path,
+        directory: Path,
+    ) -> None:
+
+        current = directory
+
+        while current != repository:
+
+            try:
+                current.relative_to(repository)
+            except ValueError:
+                break
+
+            try:
+                current.rmdir()
+            except OSError:
+                break
+
+            current = current.parent
 
     @classmethod
     def cleanup_backups(

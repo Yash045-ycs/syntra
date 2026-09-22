@@ -5,8 +5,11 @@ import {
   ExternalLink,
   Loader2,
   AlertCircle,
+  Unplug,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import {
+  disconnectGitHub,
   getCurrentUser,
   getGitHubAuthorizationUrl,
 } from "../services/api";
@@ -18,9 +21,12 @@ type User = {
 };
 
 function GitHubPage() {
+  const navigate = useNavigate();
+
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
 
@@ -29,37 +35,41 @@ function GitHubPage() {
     const connected = params.get("connected");
     const errorCode = params.get("error");
 
-    if (connected === "true") {
-      setSuccess(true);
-    }
-
     if (errorCode) {
       setError(getGitHubErrorMessage(errorCode));
     }
 
-    if (connected === "true" || errorCode) {
-      window.history.replaceState({}, "", "/github");
+    async function initialize() {
+      try {
+        setLoading(true);
+
+        const data = (await getCurrentUser()) as User;
+        setUser(data);
+
+        if (connected === "true") {
+          setSuccess(true);
+
+          window.history.replaceState({}, "", "/github");
+
+          setTimeout(() => {
+            navigate("/projects", { replace: true });
+          }, 700);
+        } else if (errorCode) {
+          window.history.replaceState({}, "", "/github");
+        }
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to load GitHub connection status",
+        );
+      } finally {
+        setLoading(false);
+      }
     }
 
-    loadUser();
-  }, []);
-
-  async function loadUser() {
-    try {
-      setLoading(true);
-
-      const data = (await getCurrentUser()) as User;
-      setUser(data);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Failed to load GitHub connection status",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
+    initialize();
+  }, [navigate]);
 
   async function connectGitHub() {
     try {
@@ -77,6 +87,41 @@ function GitHubPage() {
           : "Failed to connect GitHub",
       );
       setConnecting(false);
+    }
+  }
+
+  async function handleDisconnect() {
+    const confirmed = window.confirm(
+      "Disconnect your GitHub account from Syntra?\n\nYou will need to reconnect GitHub before adding repositories or running GitHub operations.",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setDisconnecting(true);
+      setError("");
+      setSuccess(false);
+
+      await disconnectGitHub();
+
+      setUser((currentUser) =>
+        currentUser
+          ? {
+              ...currentUser,
+              github_username: null,
+            }
+          : null,
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to disconnect GitHub",
+      );
+    } finally {
+      setDisconnecting(false);
     }
   }
 
@@ -127,7 +172,7 @@ function GitHubPage() {
             </p>
 
             <p className="mt-1 text-sm text-emerald-400/70">
-              Your GitHub account is now connected to Syntra.
+              Loading your projects...
             </p>
           </div>
         </div>
@@ -135,7 +180,7 @@ function GitHubPage() {
 
       {error && (
         <div className="mt-6 flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3">
-          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-400" />
+          <AlertCircle className="mt-0.5 h-5 w-5 text-red-400" />
 
           <div>
             <p className="text-sm font-medium text-red-400">
@@ -202,6 +247,25 @@ function GitHubPage() {
                   View GitHub Profile
                   <ExternalLink className="h-4 w-4" />
                 </a>
+
+                <button
+                  type="button"
+                  onClick={handleDisconnect}
+                  disabled={disconnecting}
+                  className="inline-flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-400 transition hover:border-red-500/30 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {disconnecting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Disconnecting...
+                    </>
+                  ) : (
+                    <>
+                      <Unplug className="h-4 w-4" />
+                      Disconnect GitHub
+                    </>
+                  )}
+                </button>
               </div>
             </div>
           ) : (

@@ -203,11 +203,33 @@ class GitService:
         if not add_result["success"]:
             return add_result
 
-        return cls.run_git(
+        commit_result = cls.run_git(
             repository_path,
             ["commit", "-m", message],
         )
 
+        if not commit_result["success"]:
+            return commit_result
+
+        sha_result = cls.run_git(
+            repository_path,
+            ["rev-parse", "HEAD"],
+        )
+
+        if not sha_result["success"]:
+            return {
+                **commit_result,
+                "stderr": (
+                    commit_result["stderr"]
+                    or sha_result["stderr"]
+                ),
+                "success": False,
+            }
+
+        return {
+            **commit_result,
+            "stdout": f"commit {sha_result['stdout']}",
+        }
     @classmethod
     def push_branch(
         cls,

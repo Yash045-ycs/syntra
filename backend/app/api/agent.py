@@ -7,6 +7,8 @@ from app.db.database import get_db
 from app.db.models import AgentRun, Project, User
 from app.services.agent_run_service import AgentRunService
 from app.services.github_service import GitHubService
+from app.services.repository_index_service import RepositoryIndexService
+from app.services.token_encryption_service import TokenEncryptionService
 
 router = APIRouter()
 
@@ -15,13 +17,41 @@ class AgentRequest(BaseModel):
     request: str
 
 
-@router.post("/projects/{project_id}/agent/run")
-def run_project_agent(
+def get_github_access_token(
+    current_user: User,
+) -> str:
+
+    if not current_user.github_access_token:
+        raise HTTPException(
+            status_code=403,
+            detail="GitHub account is not connected",
+        )
+
+    try:
+        access_token = TokenEncryptionService.decrypt(
+            current_user.github_access_token
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=403,
+            detail="GitHub connection is invalid. Please reconnect GitHub.",
+        )
+
+    if not access_token:
+        raise HTTPException(
+            status_code=403,
+            detail="GitHub connection is invalid. Please reconnect GitHub.",
+        )
+
+    return access_token
+
+
+def get_owned_project(
     project_id: int,
-    agent_request: AgentRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
+    db: Session,
+    current_user: User,
+) -> Project:
+
     project = (
         db.query(Project)
         .filter(
@@ -37,11 +67,72 @@ def run_project_agent(
             detail="Project not found",
         )
 
-    if not current_user.github_access_token:
-        raise HTTPException(
-            status_code=403,
-            detail="GitHub account is not connected",
+    return project
+
+
+@router.post("/projects/{project_id}/analyze")
+def analyze_project_repository(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project = get_owned_project(
+        project_id=project_id,
+        db=db,
+        current_user=current_user,
+    )
+
+    access_token = get_github_access_token(
+        current_user
+    )
+
+    try:
+        result = (
+            RepositoryIndexService.prepare_and_index_repository(
+                repository_url=project.repository_url,
+                access_token=access_token,
+                project_id=project.id,
+                user_id=current_user.id,
+            )
         )
+
+        return result
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
+
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        )
+
+
+@router.post("/projects/{project_id}/agent/run")
+def run_project_agent(
+    project_id: int,
+    agent_request: AgentRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project = get_owned_project(
+        project_id=project_id,
+        db=db,
+        current_user=current_user,
+    )
+
+    access_token = get_github_access_token(
+        current_user
+    )
 
     if not agent_request.request.strip():
         raise HTTPException(
@@ -50,17 +141,9 @@ def run_project_agent(
         )
 
     try:
-        installation_id = current_user.github_installation_id
-
-        if not installation_id:
-            raise HTTPException(
-                status_code=403,
-                detail="GitHub App is not installed",
-            )
-
         result = AgentRunService.run(
             repository_url=project.repository_url,
-            installation_id=installation_id,
+            access_token=access_token,
             project_id=project.id,
             user_id=current_user.id,
             user_request=agent_request.request.strip(),
@@ -94,20 +177,11 @@ def get_agent_run(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = (
-        db.query(Project)
-        .filter(
-            Project.id == project_id,
-            Project.owner_id == current_user.id,
-        )
-        .first()
+    get_owned_project(
+        project_id=project_id,
+        db=db,
+        current_user=current_user,
     )
-
-    if project is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Project not found",
-        )
 
     agent_run = (
         db.query(AgentRun)
@@ -146,26 +220,18 @@ def get_agent_run(
         "completed_at": agent_run.completed_at,
     }
 
+
 @router.get("/projects/{project_id}/runs")
 def get_agent_runs(
     project_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = (
-        db.query(Project)
-        .filter(
-            Project.id == project_id,
-            Project.owner_id == current_user.id,
-        )
-        .first()
+    get_owned_project(
+        project_id=project_id,
+        db=db,
+        current_user=current_user,
     )
-
-    if project is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Project not found",
-        )
 
     agent_runs = (
         db.query(AgentRun)
@@ -207,20 +273,11 @@ def get_agent_run_diff(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = (
-        db.query(Project)
-        .filter(
-            Project.id == project_id,
-            Project.owner_id == current_user.id,
-        )
-        .first()
+    project = get_owned_project(
+        project_id=project_id,
+        db=db,
+        current_user=current_user,
     )
-
-    if project is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Project not found",
-        )
 
     agent_run = (
         db.query(AgentRun)
@@ -244,14 +301,11 @@ def get_agent_run_diff(
             detail="No pull request is associated with this run",
         )
 
-    if not current_user.github_installation_id:
-        raise HTTPException(
-            status_code=403,
-            detail="GitHub App is not installed",
-        )
+    access_token = get_github_access_token(
+        current_user
+    )
 
     repository_url = project.repository_url.rstrip("/")
-
     parts = repository_url.split("/")
 
     if len(parts) < 2:
@@ -263,11 +317,10 @@ def get_agent_run_diff(
     owner = parts[-2]
     repository = parts[-1]
 
-    try:
-        access_token = GitHubService.create_installation_token(
-            current_user.github_installation_id
-        )
+    if repository.endswith(".git"):
+        repository = repository[:-4]
 
+    try:
         files = GitHubService.get_pull_request_files(
             owner=owner,
             repository=repository,
@@ -275,10 +328,38 @@ def get_agent_run_diff(
             access_token=access_token,
         )
 
+        total_additions = 0
+        total_deletions = 0
+
+        normalized_files = []
+
+        for file in files:
+            additions = file.get("additions", 0)
+            deletions = file.get("deletions", 0)
+
+            total_additions += additions
+            total_deletions += deletions
+
+            normalized_files.append(
+                {
+                    "filename": file.get("filename"),
+                    "status": file.get("status"),
+                    "additions": additions,
+                    "deletions": deletions,
+                    "changes": file.get("changes", 0),
+                    "patch": file.get("patch"),
+                }
+            )
+
         return {
             "run_id": agent_run.id,
             "pr_number": agent_run.pr_number,
-            "files": files,
+            "files": normalized_files,
+            "summary": {
+                "files_changed": len(normalized_files),
+                "additions": total_additions,
+                "deletions": total_deletions,
+            },
         }
 
     except RuntimeError as exc:
@@ -300,20 +381,11 @@ def approve_agent_run(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = (
-        db.query(Project)
-        .filter(
-            Project.id == project_id,
-            Project.owner_id == current_user.id,
-        )
-        .first()
+    get_owned_project(
+        project_id=project_id,
+        db=db,
+        current_user=current_user,
     )
-
-    if project is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Project not found",
-        )
 
     agent_run = (
         db.query(AgentRun)
@@ -357,6 +429,141 @@ def approve_agent_run(
         "message": "Agent run approved successfully",
     }
 
+@router.post("/projects/{project_id}/runs/{run_id}/merge")
+def merge_agent_run(
+    project_id: int,
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project = get_owned_project(
+        project_id=project_id,
+        db=db,
+        current_user=current_user,
+    )
+
+    agent_run = (
+        db.query(AgentRun)
+        .filter(
+            AgentRun.id == run_id,
+            AgentRun.project_id == project_id,
+            AgentRun.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if agent_run is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Agent run not found",
+        )
+
+    if agent_run.status != "approved":
+        raise HTTPException(
+            status_code=400,
+            detail="Only approved agent runs can be merged",
+        )
+
+    if not agent_run.pr_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot merge a run without a pull request",
+        )
+
+    access_token = get_github_access_token(
+        current_user
+    )
+
+    repository_url = project.repository_url.rstrip("/")
+    parts = repository_url.split("/")
+
+    if len(parts) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid repository URL",
+        )
+
+    owner = parts[-2]
+    repository = parts[-1]
+
+    if repository.endswith(".git"):
+        repository = repository[:-4]
+
+    try:
+        pull_request = GitHubService.get_pull_request(
+            owner=owner,
+            repository=repository,
+            pull_number=agent_run.pr_number,
+            access_token=access_token,
+        )
+
+        if pull_request["merged"]:
+            agent_run.status = "merged"
+
+            db.commit()
+            db.refresh(agent_run)
+
+            return {
+                "run_id": agent_run.id,
+                "status": agent_run.status,
+                "pull_request": pull_request,
+                "message": "Pull request was already merged",
+            }
+
+        if pull_request["state"] != "open":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Pull request is not open and cannot be merged"
+                ),
+            )
+
+        merge_result = GitHubService.merge_pull_request(
+            owner=owner,
+            repository=repository,
+            pull_number=agent_run.pr_number,
+            access_token=access_token,
+            merge_method="squash",
+        )
+
+        if not merge_result["merged"]:
+            raise HTTPException(
+                status_code=400,
+                detail=merge_result.get(
+                    "message",
+                    "Pull request could not be merged",
+                ),
+            )
+
+        agent_run.status = "merged"
+
+        db.commit()
+        db.refresh(agent_run)
+
+        return {
+            "run_id": agent_run.id,
+            "status": agent_run.status,
+            "pr_number": agent_run.pr_number,
+            "pr_url": agent_run.pr_url,
+            "merge": merge_result,
+            "message": "Pull request merged successfully",
+        }
+
+    except HTTPException:
+        raise
+
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        )
+
 @router.get("/projects/{project_id}/runs/{run_id}/pr")
 def get_agent_run_pr_status(
     project_id: int,
@@ -364,20 +571,11 @@ def get_agent_run_pr_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = (
-        db.query(Project)
-        .filter(
-            Project.id == project_id,
-            Project.owner_id == current_user.id,
-        )
-        .first()
+    project = get_owned_project(
+        project_id=project_id,
+        db=db,
+        current_user=current_user,
     )
-
-    if project is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Project not found",
-        )
 
     agent_run = (
         db.query(AgentRun)
@@ -401,11 +599,9 @@ def get_agent_run_pr_status(
             detail="No pull request is associated with this run",
         )
 
-    if not current_user.github_installation_id:
-        raise HTTPException(
-            status_code=403,
-            detail="GitHub App is not installed",
-        )
+    access_token = get_github_access_token(
+        current_user
+    )
 
     repository_url = project.repository_url.rstrip("/")
     parts = repository_url.split("/")
@@ -419,11 +615,10 @@ def get_agent_run_pr_status(
     owner = parts[-2]
     repository = parts[-1]
 
-    try:
-        access_token = GitHubService.create_installation_token(
-            current_user.github_installation_id
-        )
+    if repository.endswith(".git"):
+        repository = repository[:-4]
 
+    try:
         pr = GitHubService.get_pull_request(
             owner=owner,
             repository=repository,

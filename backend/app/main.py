@@ -9,6 +9,7 @@ from app.db.database import Base, engine
 from app.db import models
 from app.api.github import router as github_router
 from app.api.agent import router as agent_router
+from app.api import activity
 
 
 # Create database tables
@@ -52,6 +53,8 @@ app.include_router(
     auth_router,
     prefix="/api",
 )
+
+app.include_router(activity.router, prefix="/api")
 
 app.include_router(
     github_router,

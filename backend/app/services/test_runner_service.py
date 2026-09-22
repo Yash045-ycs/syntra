@@ -45,6 +45,12 @@ class TestRunnerService:
 
         test_info = cls.discover(repository_path)
 
+        print("\n" + "=" * 80)
+        print("SYNTRA TEST DISCOVERY")
+        print("=" * 80)
+        print(f"TEST INFO: {test_info}")
+        print("=" * 80)
+
         if not test_info["detected"]:
             return {
                 **test_info,
@@ -98,7 +104,6 @@ class TestRunnerService:
                 "return_code": None,
             }
 
-    @staticmethod
     @staticmethod
     def _detect_python(repository: Path):
 

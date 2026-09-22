@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -7,18 +8,21 @@ from app.db.database import get_db
 from app.db.models import Project, User
 from app.services.github_service import GitHubService
 from app.services.repository_service import RepositoryService
-from app.services.github_app_service import GitHubAppService
+from app.services.token_encryption_service import TokenEncryptionService
 
 
 router = APIRouter()
 
 
 class ProjectCreate(BaseModel):
-    name: str
-    repository_url: str
+    name: str = Field(min_length=1, max_length=255)
+    repository_url: str = Field(min_length=1, max_length=500)
 
 
-@router.post("/projects")
+@router.post(
+    "/projects",
+    status_code=status.HTTP_201_CREATED,
+)
 def create_project(
     project_data: ProjectCreate,
     db: Session = Depends(get_db),
@@ -26,31 +30,63 @@ def create_project(
 ):
     if not current_user.github_access_token:
         raise HTTPException(
-            status_code=403,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="GitHub account is not connected",
         )
 
-    if not RepositoryService.validate_github_url(
-        project_data.repository_url
-    ):
+    if not current_user.github_username:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="GitHub username is not available",
+        )
+
+    repository_url = project_data.repository_url.strip()
+
+    if not RepositoryService.validate_github_url(repository_url):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid GitHub repository URL",
         )
 
-    repository_parts = (
-        project_data.repository_url
-        .rstrip("/")
-        .split("/")
-    )
+    repository_parts = repository_url.rstrip("/").split("/")
+
+    if len(repository_parts) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid GitHub repository URL",
+        )
 
     owner = repository_parts[-2]
     repository = repository_parts[-1]
 
+    if repository.endswith(".git"):
+        repository = repository[:-4]
+
+    if not owner or not repository:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid GitHub repository URL",
+        )
+
+    existing_project = db.scalar(
+        select(Project).where(
+            Project.owner_id == current_user.id,
+            Project.repository_url.ilike(
+                f"https://github.com/{owner}/{repository}"
+            ),
+        )
+    )
+
+    if existing_project:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This repository is already added to your Syntra projects",
+        )
+
     try:
-        access_token = GitHubAppService.get_installation_token_for_user(
-    current_user
-)
+        access_token = TokenEncryptionService.decrypt(
+            current_user.github_access_token
+        )
 
         github_repository = GitHubService.get_repository(
             owner=owner,
@@ -60,21 +96,29 @@ def create_project(
 
     except Exception:
         raise HTTPException(
-            status_code=403,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this GitHub repository",
         )
 
+    github_owner = github_repository.get("owner")
+
+    if not github_owner:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Unable to verify GitHub repository ownership",
+        )
+
     if (
-        github_repository["owner"].lower()
+        github_owner.lower()
         != current_user.github_username.lower()
     ):
         raise HTTPException(
-            status_code=403,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="GitHub repository is not owned by the connected account",
         )
 
     project = Project(
-        name=project_data.name,
+        name=project_data.name.strip(),
         repository_url=github_repository["html_url"],
         owner_id=current_user.id,
     )
@@ -117,7 +161,7 @@ def get_project(
 
     if project is None:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="Project not found",
         )
 
@@ -141,7 +185,7 @@ def delete_project(
 
     if project is None:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="Project not found",
         )
 

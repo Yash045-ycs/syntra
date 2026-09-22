@@ -1,17 +1,26 @@
 import {
-  Activity,
+  Activity as ActivityIcon,
   FolderGit2,
   GitBranch,
   GitPullRequest,
   LayoutDashboard,
+  LogIn,
+  LogOut,
   Menu,
   Settings,
   Sparkles,
   Terminal,
+  User,
   X,
 } from "lucide-react";
-import { useState } from "react";
-import { NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
+import {
+  NavLink,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 
 import Register from "./pages/Register";
 import Login from "./pages/Login";
@@ -23,6 +32,9 @@ import PullRequests from "./pages/PullRequests";
 import GitHub from "./pages/GitHub";
 import ActivityLogs from "./pages/ActivityLogs";
 import SettingsPage from "./pages/Settings";
+import AgentRunDetails from "./pages/AgentRunDetails";
+import ProjectDetails from "./pages/ProjectDetails";
+import Activity from "./pages/Activity";
 
 const navigation = [
   {
@@ -38,12 +50,17 @@ const navigation = [
   {
     label: "Agent Runs",
     path: "/runs",
-    icon: Activity,
+    icon: ActivityIcon,
   },
   {
     label: "Pull Requests",
     path: "/pull-requests",
     icon: GitPullRequest,
+  },
+  {
+    label: "Activity",
+    path: "/activity",
+    icon: ActivityIcon,
   },
 ];
 
@@ -67,12 +84,39 @@ const developerNavigation = [
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(
+    Boolean(localStorage.getItem("syntra_token")),
+  );
+
   const location = useLocation();
+  const navigate = useNavigate();
 
   const currentNavigation = [
     ...navigation,
     ...developerNavigation,
   ].find((item) => item.path === location.pathname);
+
+  useEffect(() => {
+    setLoggedIn(Boolean(localStorage.getItem("syntra_token")));
+    setAccountOpen(false);
+  }, [location.pathname]);
+
+  function handleLogout() {
+    localStorage.removeItem("syntra_token");
+    setLoggedIn(false);
+    setAccountOpen(false);
+    navigate("/login");
+  }
+
+  function handleAccountClick() {
+    if (!loggedIn) {
+      navigate("/login");
+      return;
+    }
+
+    setAccountOpen((current) => !current);
+  }
 
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100">
@@ -182,37 +226,101 @@ function App() {
               </span>
             </div>
 
-            <div className="ml-auto flex items-center gap-3">
-              <div className="hidden items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 sm:flex">
-                <GitBranch size={14} className="text-zinc-400" />
+            <div className="relative ml-auto">
+              {loggedIn ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleAccountClick}
+                    className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-zinc-800 text-xs font-semibold text-white transition hover:border-white/20 hover:bg-zinc-700"
+                    aria-label="Open account menu"
+                  >
+                    Y
+                  </button>
 
-                <span className="text-xs text-zinc-300">
-                  GitHub connected
-                </span>
+                  {accountOpen && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setAccountOpen(false)}
+                        className="fixed inset-0 z-40 cursor-default"
+                        aria-label="Close account menu"
+                      />
 
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              </div>
+                      <div className="absolute right-0 top-11 z-50 w-56 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl">
+                        <div className="border-b border-zinc-800 px-4 py-3">
+                          <p className="text-xs font-medium text-white">
+                            Syntra Account
+                          </p>
 
-              <div className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-zinc-800 text-xs font-semibold">
-                Y
-              </div>
+                          <p className="mt-1 text-[11px] text-zinc-600">
+                            Manage your account
+                          </p>
+                        </div>
+
+                        <div className="p-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAccountOpen(false);
+                              navigate("/settings");
+                            }}
+                            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-zinc-400 transition hover:bg-white/[0.05] hover:text-white"
+                          >
+                            <User size={15} />
+                            Account & Settings
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={handleLogout}
+                            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-red-400 transition hover:bg-red-500/10"
+                          >
+                            <LogOut size={15} />
+                            Log out
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => navigate("/login")}
+                  className="flex items-center gap-2 rounded-lg bg-white px-3.5 py-2 text-xs font-medium text-black transition hover:bg-zinc-200"
+                >
+                  <LogIn size={14} />
+                  Log in
+                </button>
+              )}
             </div>
           </header>
 
           <Routes>
-  <Route path="/login" element={<Login />} />
-  <Route path="/register" element={<Register />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
 
-  <Route element={<ProtectedRoute />}>
-    <Route path="/" element={<Dashboard />} />
-    <Route path="/projects" element={<Projects />} />
-    <Route path="/runs" element={<AgentRuns />} />
-    <Route path="/pull-requests" element={<PullRequests />} />
-    <Route path="/github" element={<GitHub />} />
-    <Route path="/logs" element={<ActivityLogs />} />
-    <Route path="/settings" element={<SettingsPage />} />
-  </Route>
-</Routes>
+            <Route path="/settings" element={<SettingsPage />} />
+
+            <Route element={<ProtectedRoute />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/projects" element={<Projects />} />
+              <Route
+  path="/projects/:projectId"
+  element={<ProjectDetails />}
+/>
+              <Route path="/runs" element={<AgentRuns />} />
+              <Route
+    path="/projects/:projectId/runs/:runId"
+    element={<AgentRunDetails />}
+  />
+              <Route path="/pull-requests" element={<PullRequests />} />
+              <Route path="/github" element={<GitHub />} />
+              <Route path="/logs" element={<ActivityLogs />} />
+              <Route path="/activity" element={<Activity />} />
+            </Route>
+          </Routes>
         </main>
       </div>
     </div>

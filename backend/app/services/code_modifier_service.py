@@ -49,16 +49,29 @@ SOURCE FILES:
 {context}
 
 Rules:
-- Modify only files supported by the implementation plan.
+- Follow the implementation plan exactly.
+- Modify only files listed in files_to_modify.
+- Create only files listed in files_to_create.
+- If the implementation plan explicitly requests a file to be created,
+  you may create that file even when it does not exist in the provided
+  source files.
 - Preserve existing functionality unless the request requires changing it.
 - Do not invent unavailable project structure.
 - Do not modify dependencies unless explicitly required.
 - Return complete replacement content for every modified file.
-- Do not include markdown code fences.
+- Return complete content for every newly created file.
+- For README.md creation, generate a concise and accurate README based
+  only on the repository context, implementation plan, and user request.
+- Do not claim features, technologies, commands, APIs, or architecture
+  that are not supported by the provided context.
+- Do not include markdown code fences around file content.
 - Do not explain the changes outside the JSON response.
 - Never include secrets, credentials, API keys, or tokens.
-- If the requested change cannot be safely implemented from the provided
-  context, return an empty changes list and explain why.
+- If a requested modification cannot be safely implemented from the
+  provided context, do not invent code.
+- If a requested new file cannot be safely created from the available
+  context, do not create it and explain why in files_not_modified or
+  warnings.
 
 Return ONLY valid JSON:
 
@@ -67,6 +80,12 @@ Return ONLY valid JSON:
     {{
       "file_path": "string",
       "action": "modify",
+      "reason": "string",
+      "content": "complete file content"
+    }},
+    {{
+      "file_path": "string",
+      "action": "create",
       "reason": "string",
       "content": "complete file content"
     }}
@@ -95,6 +114,11 @@ Return ONLY valid JSON:
                     ),
                 )
 
+                if result is None:
+                    raise RuntimeError(
+                        "Gemini returned None instead of a response"
+                    )
+
                 if not result.text:
                     raise RuntimeError(
                         "Gemini returned an empty modification response"
@@ -109,6 +133,7 @@ Return ONLY valid JSON:
 
                 cls._validate_changes(
                     changes,
+                    plan,
                     source_files,
                 )
 
@@ -152,6 +177,7 @@ Return ONLY valid JSON:
     @staticmethod
     def _validate_changes(
         changes: dict,
+        plan: dict,
         source_files: dict[str, str],
     ) -> None:
 
@@ -160,6 +186,11 @@ Return ONLY valid JSON:
             "files_not_modified",
             "warnings",
         }
+
+        if not isinstance(changes, dict):
+            raise RuntimeError(
+                "Modification response must be an object"
+            )
 
         missing = required_fields - changes.keys()
 
@@ -177,12 +208,34 @@ Return ONLY valid JSON:
         if not isinstance(changes["warnings"], list):
             raise RuntimeError("warnings must be a list")
 
-        allowed_paths = set(source_files.keys())
+        files_to_modify = {
+            item.get("file_path")
+            for item in plan.get("files_to_modify", [])
+            if isinstance(item, dict)
+        }
+
+        files_to_create = {
+            item.get("file_path")
+            for item in plan.get("files_to_create", [])
+            if isinstance(item, dict)
+        }
+
+        files_to_modify.discard(None)
+        files_to_create.discard(None)
+
+        if files_to_modify & files_to_create:
+            raise RuntimeError(
+                "A file cannot appear in both files_to_modify and files_to_create"
+            )
+
+        existing_files = set(source_files.keys())
 
         for change in changes["changes"]:
 
             if not isinstance(change, dict):
-                raise RuntimeError("Each change must be an object")
+                raise RuntimeError(
+                    "Each change must be an object"
+                )
 
             required_change_fields = {
                 "file_path",
@@ -200,19 +253,49 @@ Return ONLY valid JSON:
                     f"Change missing fields: {sorted(missing_change_fields)}"
                 )
 
-            if change["action"] != "modify":
+            file_path = change["file_path"]
+            action = change["action"]
+
+            if not isinstance(file_path, str) or not file_path.strip():
                 raise RuntimeError(
-                    f"Unsupported action: {change['action']}"
+                    "file_path must be a non-empty string"
                 )
 
-            file_path = change["file_path"]
-
-            if file_path not in allowed_paths:
+            if not isinstance(change["reason"], str):
                 raise RuntimeError(
-                    f"Modification attempted on unauthorized file: {file_path}"
+                    f"Reason must be a string for {file_path}"
                 )
 
             if not isinstance(change["content"], str):
                 raise RuntimeError(
                     f"Content must be a string for {file_path}"
+                )
+
+            if action == "modify":
+
+                if file_path not in existing_files:
+                    raise RuntimeError(
+                        f"Cannot modify unavailable file: {file_path}"
+                    )
+
+                if file_path not in files_to_modify:
+                    raise RuntimeError(
+                        f"Modification attempted on unauthorized file: {file_path}"
+                    )
+
+            elif action == "create":
+
+                if file_path in existing_files:
+                    raise RuntimeError(
+                        f"Cannot create file that already exists: {file_path}"
+                    )
+
+                if file_path not in files_to_create:
+                    raise RuntimeError(
+                        f"Creation attempted on unauthorized file: {file_path}"
+                    )
+
+            else:
+                raise RuntimeError(
+                    f"Unsupported action: {action}"
                 )

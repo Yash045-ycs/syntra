@@ -12,10 +12,11 @@ class GitHubAuthService:
     @classmethod
     def get_authorization_url(cls, state: str) -> str:
         params = {
-            "client_id": settings.GITHUB_CLIENT_ID,
-            "redirect_uri": "http://localhost:8000/api/github/callback",
-            "state": state,
-        }
+    "client_id": settings.GITHUB_CLIENT_ID,
+    "redirect_uri": "http://localhost:8000/api/github/callback",
+    "state": state,
+    "scope": "repo read:user",
+}
 
         query = "&".join(
             f"{key}={requests.utils.quote(str(value))}"
