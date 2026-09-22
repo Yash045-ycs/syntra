@@ -13,7 +13,7 @@ class GitHubAuthService:
     def get_authorization_url(cls, state: str) -> str:
         params = {
     "client_id": settings.GITHUB_CLIENT_ID,
-    "redirect_uri": "http://localhost:8000/api/github/callback",
+    "redirect_uri": settings.GITHUB_REDIRECT_URI,
     "state": state,
     "scope": "repo read:user",
 }
@@ -33,10 +33,11 @@ class GitHubAuthService:
                 "Accept": "application/json",
             },
             data={
-                "client_id": settings.GITHUB_CLIENT_ID,
-                "client_secret": settings.GITHUB_CLIENT_SECRET,
-                "code": code,
-            },
+    "client_id": settings.GITHUB_CLIENT_ID,
+    "client_secret": settings.GITHUB_CLIENT_SECRET,
+    "code": code,
+    "redirect_uri": settings.GITHUB_REDIRECT_URI,
+},
             timeout=30,
         )
 

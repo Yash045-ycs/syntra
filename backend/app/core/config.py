@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     GITHUB_CLIENT_SECRET: str
     GITHUB_TOKEN_ENCRYPTION_KEY: str
     GITHUB_APP_PRIVATE_KEY_PATH: str
+    GITHUB_REDIRECT_URI: str
 
     class Config:
         env_file = ".env"
